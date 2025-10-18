@@ -6,6 +6,11 @@ import requests
 from bs4 import BeautifulSoup
 import json
 import time
+import random
+from typing import Optional
+
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # Selenium imports (Show more 버튼 클릭을 위해)
 try:
@@ -45,8 +50,147 @@ CONFIG = load_config()
 
 # User-Agent 헤더 추가 (Google Scholar 접근을 위해 필수)
 HEADERS = {
-    'User-Agent': CONFIG.get('user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
+    'User-Agent': CONFIG.get(
+        'user_agent',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    ),
+    'Accept-Language': CONFIG.get('accept_language', 'en-US,en;q=0.9,ko;q=0.8'),
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+    'Referer': 'https://scholar.google.com/'
 }
+
+
+def _build_retry() -> Retry:
+    """Create a urllib3 Retry object configured for 429 and 5xx.
+
+    Uses config values when present; provides sensible defaults otherwise.
+    """
+    total = CONFIG.get('max_retries', CONFIG.get('retry_count', 3))
+    backoff = CONFIG.get('backoff_factor', 1)
+    status_forcelist = CONFIG.get('status_forcelist', [429, 500, 502, 503, 504])
+
+    # Only idempotent methods by default; we only do GETs here.
+    allowed_methods = frozenset(['HEAD', 'GET', 'OPTIONS'])
+
+    return Retry(
+        total=total,
+        connect=total,
+        read=total,
+        status=total,
+        backoff_factor=backoff,
+        status_forcelist=status_forcelist,
+        allowed_methods=allowed_methods,
+        respect_retry_after_header=True,
+        raise_on_status=False,
+    )
+
+
+def _build_session() -> requests.Session:
+    """Create a requests.Session mounted with a retrying adapter."""
+    session = requests.Session()
+    adapter = HTTPAdapter(max_retries=_build_retry())
+    session.mount('https://', adapter)
+    session.mount('http://', adapter)
+    return session
+
+
+# Reuse a single session for connection pooling and centralized retries
+SESSION = _build_session()
+
+
+def _sleep_with_jitter():
+    """Sleep between requests to avoid rate limiting.
+
+    Uses `request_delay` and `request_jitter` from config. If not provided,
+    defaults to 1s delay and 0.5s jitter.
+    """
+    base = CONFIG.get('request_delay', 1) or 0
+    jitter = CONFIG.get('request_jitter', 0.5) or 0
+    if base > 0 or jitter > 0:
+        time.sleep(base + (random.uniform(0, jitter) if jitter > 0 else 0))
+
+
+def _looks_like_scholar_block(resp: requests.Response) -> bool:
+    """Google 'Sorry' 또는 차단 응답을 휴리스틱으로 판별."""
+    url = (resp.url or '').lower()
+    if 'sorry' in url and 'google' in url:
+        return True
+    # 본문 내 일반적인 문구 탐지
+    txt = resp.text.lower() if isinstance(resp.text, str) else ''
+    block_keywords = [
+        'unusual traffic', 'sorry', 'detected', 'captcha', 'verify you are a human',
+        'gs_captcha', 'to continue, please', 'our systems have detected'
+    ]
+    return any(k in txt for k in block_keywords)
+
+
+def http_get(url: str, headers: Optional[dict] = None, timeout: Optional[int] = None, allow_redirects: bool = True) -> requests.Response:
+    """GET with robust handling for 429 and block pages.
+
+    - Session with Retry handles transient network errors and some status retries.
+    - If still 429 or a Google 'Sorry' block is detected, waits (Retry-After or
+      configured backoff) and, if `retry_forever` is enabled, continues until success.
+    - Adds pacing + jitter between attempts.
+    """
+    merged_headers = dict(HEADERS)
+    if headers:
+        merged_headers.update(headers)
+
+    timeout = timeout or CONFIG.get('request_timeout', 10)
+
+    retry_forever = CONFIG.get('retry_forever', True)
+    backoff = float(CONFIG.get('backoff_factor', 1.5))
+    base_wait = int(CONFIG.get('retry_delay_on_429', CONFIG.get('retry_delay', 30)))
+    max_wait = int(CONFIG.get('max_wait_on_block', 900))  # 기본 15분 상한
+
+    attempt = 0
+    wait_s = max(1, base_wait)
+
+    while True:
+        _sleep_with_jitter()
+        resp = SESSION.get(url, headers=merged_headers, timeout=timeout, allow_redirects=allow_redirects)
+
+        # 정상 응답이면서 차단 페이지가 아니면 반환
+        if 200 <= resp.status_code < 300 and not _looks_like_scholar_block(resp):
+            return resp
+
+        # 429 또는 차단 페이지 처리
+        if resp.status_code == 429 or _looks_like_scholar_block(resp) or resp.status_code in (500, 502, 503, 504, 403):
+            # Retry-After 우선
+            retry_after_hdr = resp.headers.get('Retry-After')
+            header_wait = None
+            if retry_after_hdr:
+                try:
+                    header_wait = int(retry_after_hdr)
+                except ValueError:
+                    header_wait = None
+
+            effective_wait = header_wait if header_wait is not None else min(wait_s, max_wait)
+            reason = '429' if resp.status_code == 429 else f'status {resp.status_code}'
+            if _looks_like_scholar_block(resp):
+                reason = 'Google 차단 페이지 감지'
+            print(f"⚠ 요청 제한/차단 감지: {reason}\n  {effective_wait}초 대기 후 재시도 ({attempt+1}회차)…\n  URL: {url}")
+            time.sleep(effective_wait)
+
+            attempt += 1
+            # 무한 재시도 허용 시 계속, 아니면 한 번 더 시도 후 종료
+            if retry_forever:
+                # 지수 백오프 증가 (상한 적용)
+                wait_s = min(int(wait_s * backoff) + 1, max_wait)
+                continue
+            else:
+                # 한 번 더 재시도 후 실패 시 raise
+                if attempt >= int(CONFIG.get('max_retries', CONFIG.get('retry_count', 3))):
+                    resp.raise_for_status()
+                    return resp
+                else:
+                    continue
+
+        # 그 외 상태코드는 에러로 처리
+        resp.raise_for_status()
+        return resp
 
 def fetch_papers_selenium(author_url):
     """Selenium을 사용해 'Show more' 버튼을 클릭하여 모든 논문 링크 추출"""
@@ -207,7 +351,7 @@ def fetch_papers_basic(author_url):
     print("논문 목록을 가져오는 중...")
 
     # 페이지네이션 처리
-    page_size = 100  # 한 번에 가져올 논문 수
+    page_size = CONFIG.get('page_size', 100)  # 한 번에 가져올 논문 수
     start_index = 0
 
     while True:
@@ -216,8 +360,7 @@ def fetch_papers_basic(author_url):
             url = f"https://scholar.google.com/citations?user={user_id}&hl=en&cstart={start_index}&pagesize={page_size}&view_op=list_works&sortby=pubdate"
 
             print(f"  페이지 요청 중... (시작 인덱스: {start_index})")
-            response = requests.get(url, headers=HEADERS)
-            response.raise_for_status()
+            response = http_get(url)
             soup = BeautifulSoup(response.text, "html.parser")
 
             # 논문별 상세페이지 링크 추출
@@ -247,7 +390,8 @@ def fetch_papers_basic(author_url):
             start_index += page_size
 
             # Google Scholar 서버 부하 방지를 위한 대기
-            time.sleep(2)
+            # 서버 부하 방지를 위한 대기 (configurable)
+            _sleep_with_jitter()
 
         except Exception as e:
             print(f"논문 링크 추출 중 오류 발생: {e}")
@@ -259,8 +403,7 @@ def fetch_papers_basic(author_url):
 def fetch_author_profile(author_url):
     """저자 프로필 페이지에서 저자 정보 추출"""
     try:
-        response = requests.get(author_url, headers=HEADERS, timeout=10)
-        response.raise_for_status()
+        response = http_get(author_url)
         soup = BeautifulSoup(response.text, "html.parser")
 
         profile = {}
@@ -308,8 +451,7 @@ def fetch_paper_detail(paper_url, retry_count=3):
     """논문 상세 페이지에서 정보 추출 (재시도 기능 포함)"""
     for attempt in range(retry_count):
         try:
-            response = requests.get(paper_url, headers=HEADERS, timeout=10)
-            response.raise_for_status()
+            response = http_get(paper_url)
             soup = BeautifulSoup(response.text, "html.parser")
 
             # 제목 추출
