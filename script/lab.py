@@ -337,12 +337,24 @@ def fetch_paper_detail(paper_url, retry_count=3):
                     citations = value.text.strip()
                     break
 
+            # 외부 논문 링크 추출 (실제 출판사 사이트 링크)
+            external_url = None
+            external_link_div = soup.find("div", class_="gsc_oci_title_ggi")
+            if external_link_div:
+                external_link_a = external_link_div.find("a")
+                if external_link_a and external_link_a.get("href"):
+                    external_url = external_link_a.get("href")
+
             # JSON 구조 생성 (dictionary)
             article = {
                 "title": title,
                 "authors": [],
                 "google_scholar_url": paper_url
             }
+
+            # 외부 링크가 있으면 추가
+            if external_url:
+                article["external_url"] = external_url
 
             # 저자 정보
             if "Authors" in metadata:
