@@ -256,6 +256,54 @@ def fetch_papers_basic(author_url):
     print(f"\n총 {len(paper_links)}개의 논문 링크를 찾았습니다.")
     return paper_links
 
+def fetch_author_profile(author_url):
+    """저자 프로필 페이지에서 저자 정보 추출"""
+    try:
+        response = requests.get(author_url, headers=HEADERS, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        profile = {}
+
+        # 저자 이름 추출
+        name_elem = soup.find("div", id="gsc_prf_in")
+        if name_elem:
+            profile["name"] = name_elem.text.strip()
+
+        # 소속 기관 추출
+        org_elem = soup.find("a", class_="gsc_prf_ila")
+        if org_elem:
+            profile["institution"] = org_elem.text.strip()
+
+        # 이메일 및 홈페이지 추출
+        email_div = soup.find("div", id="gsc_prf_ivh")
+        if email_div:
+            email_text = email_div.text.strip()
+            # "Verified email at udel.edu - Homepage" 형식에서 이메일 추출
+            if "Verified email at" in email_text:
+                email_part = email_text.split("Verified email at")[1].split("-")[0].strip()
+                profile["verified_email"] = email_part
+
+            # 홈페이지 링크 추출
+            homepage_link = email_div.find("a", class_="gsc_prf_ila")
+            if homepage_link and homepage_link.get("href"):
+                profile["homepage"] = homepage_link.get("href")
+
+        # 연구 관심사 추출
+        interests_div = soup.find("div", id="gsc_prf_int")
+        if interests_div:
+            interest_links = interests_div.find_all("a", class_="gsc_prf_inta")
+            if interest_links:
+                profile["research_interests"] = [link.text.strip() for link in interest_links]
+
+        print(f"✓ 저자 프로필 정보 추출 완료: {profile.get('name', 'N/A')}")
+        return profile
+
+    except Exception as e:
+        print(f"⚠ 저자 프로필 정보 추출 실패: {e}")
+        return {}
+
+
 def fetch_paper_detail(paper_url, retry_count=3):
     """논문 상세 페이지에서 정보 추출 (재시도 기능 포함)"""
     for attempt in range(retry_count):
@@ -367,6 +415,14 @@ def main(author_url_or_papers):
         print("\n" + "=" * 80)
         print("저자 프로필 처리 모드")
         print("=" * 80)
+
+        # 저자 프로필 정보 추출
+        print("\n저자 프로필 정보 추출 중...")
+        author_profile = fetch_author_profile(author_url_or_papers)
+        if author_profile:
+            result["author_profile"] = author_profile
+
+        # 논문 목록 가져오기
         paper_urls = fetch_papers(author_url_or_papers)
 
         if not paper_urls:
