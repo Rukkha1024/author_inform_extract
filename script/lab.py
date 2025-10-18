@@ -4,8 +4,7 @@ from pathlib import Path
 import yaml
 import requests
 from bs4 import BeautifulSoup
-from xml.etree.ElementTree import Element, SubElement, tostring
-import xml.dom.minidom
+import json
 import time
 
 # Selenium imports (Show more 버튼 클릭을 위해)
@@ -284,54 +283,54 @@ def fetch_paper_detail(paper_url, retry_count=3):
             abstract = abstract_elem.text.strip() if abstract_elem else "N/A"
 
             # 인용 수 추출
-            citation_elem = soup.find("div", class_="gsc_oci_value")
             citations = "N/A"
             for field, value in zip(fields, values):
                 if "Total citations" in field.text:
                     citations = value.text.strip()
                     break
 
-            # XML 구조 생성
-            article = Element('Article')
-            SubElement(article, "Title").text = title
+            # JSON 구조 생성 (dictionary)
+            article = {
+                "title": title,
+                "authors": [],
+                "google_scholar_url": paper_url
+            }
 
             # 저자 정보
             if "Authors" in metadata:
-                authors_elem = SubElement(article, "Authors")
-                for author_name in metadata["Authors"].split(", "):
-                    SubElement(authors_elem, "Author").text = author_name.strip()
+                article["authors"] = [author.strip() for author in metadata["Authors"].split(", ")]
 
             # 발행 정보
             if "Publication date" in metadata:
-                SubElement(article, "PublicationDate").text = metadata["Publication date"]
+                article["publication_date"] = metadata["Publication date"]
 
             if "Journal" in metadata:
-                SubElement(article, "Journal").text = metadata["Journal"]
+                article["journal"] = metadata["Journal"]
 
             if "Volume" in metadata:
-                SubElement(article, "Volume").text = metadata["Volume"]
+                article["volume"] = metadata["Volume"]
 
             if "Pages" in metadata:
-                SubElement(article, "Pages").text = metadata["Pages"]
+                article["pages"] = metadata["Pages"]
 
             if "Publisher" in metadata:
-                SubElement(article, "Publisher").text = metadata["Publisher"]
+                article["publisher"] = metadata["Publisher"]
 
             # 인용 수
             if citations != "N/A":
-                SubElement(article, "Citations").text = citations
+                article["citations"] = citations
 
             # 기타 메타데이터
-            other_metadata = SubElement(article, "OtherMetadata")
+            other_metadata = {}
             for key, value in metadata.items():
                 if key not in ["Authors", "Publication date", "Journal", "Volume", "Pages", "Publisher"]:
-                    SubElement(other_metadata, key.replace(" ", "_")).text = value
+                    other_metadata[key.replace(" ", "_")] = value
+
+            if other_metadata:
+                article["other_metadata"] = other_metadata
 
             # 초록
-            SubElement(article, "Abstract").text = abstract
-
-            # 논문 URL
-            SubElement(article, "URL").text = paper_url
+            article["abstract"] = abstract
 
             print(f"  ✓ 추출 완료: {title[:60]}...")
 
@@ -350,23 +349,18 @@ def fetch_paper_detail(paper_url, retry_count=3):
 
     return None
 
-def prettify_xml(xml_string):
-    """XML을 보기 좋게 포맷팅"""
-    dom = xml.dom.minidom.parseString(xml_string)
-    return dom.toprettyxml(indent="  ")
-
 def main(author_url_or_papers):
     """메인 실행 함수"""
-    xml_root = Element("Articles")
+    result = {"papers": []}
 
     # 단일 논문 URL이 입력된 경우
     if isinstance(author_url_or_papers, str) and "view_op=view_citation" in author_url_or_papers:
         print("\n" + "=" * 80)
         print("단일 논문 처리 모드")
         print("=" * 80)
-        article_xml = fetch_paper_detail(author_url_or_papers)
-        if article_xml is not None:
-            xml_root.append(article_xml)
+        article = fetch_paper_detail(author_url_or_papers)
+        if article is not None:
+            result["papers"].append(article)
 
     # 저자 프로필 URL이 입력된 경우
     elif isinstance(author_url_or_papers, str):
@@ -377,7 +371,7 @@ def main(author_url_or_papers):
 
         if not paper_urls:
             print("\n⚠ 논문을 찾을 수 없습니다.")
-            return prettify_xml(tostring(xml_root, encoding="unicode"))
+            return json.dumps(result, ensure_ascii=False, indent=2)
 
         print(f"\n논문 상세 정보 추출 시작 (총 {len(paper_urls)}개)")
         print("-" * 80)
@@ -387,9 +381,9 @@ def main(author_url_or_papers):
 
         for idx, paper_url in enumerate(paper_urls, 1):
             print(f"[{idx}/{len(paper_urls)}] 처리 중...")
-            article_xml = fetch_paper_detail(paper_url)
-            if article_xml is not None:
-                xml_root.append(article_xml)
+            article = fetch_paper_detail(paper_url)
+            if article is not None:
+                result["papers"].append(article)
                 success_count += 1
             else:
                 fail_count += 1
@@ -410,9 +404,9 @@ def main(author_url_or_papers):
 
         for idx, paper_url in enumerate(author_url_or_papers, 1):
             print(f"[{idx}/{len(author_url_or_papers)}] 처리 중...")
-            article_xml = fetch_paper_detail(paper_url)
-            if article_xml is not None:
-                xml_root.append(article_xml)
+            article = fetch_paper_detail(paper_url)
+            if article is not None:
+                result["papers"].append(article)
                 success_count += 1
             else:
                 fail_count += 1
@@ -420,8 +414,7 @@ def main(author_url_or_papers):
         print("-" * 80)
         print(f"\n처리 완료: 성공 {success_count}개 / 실패 {fail_count}개")
 
-    xml_string = tostring(xml_root, encoding="unicode")
-    return prettify_xml(xml_string)
+    return json.dumps(result, ensure_ascii=False, indent=2)
 
 # 테스트 모드: config.yaml의 저자 프로필 URL로 테스트
 if __name__ == "__main__":
@@ -454,21 +447,21 @@ if __name__ == "__main__":
 
     try:
         # 논문 정보 추출 실행
-        result_xml = main(author_url)
+        result_json = main(author_url)
 
         print("\n" + "=" * 80)
-        print("추출된 XML (처음 500자 미리보기):")
+        print("추출된 JSON (처음 500자 미리보기):")
         print("=" * 80)
-        print(result_xml[:500] + "...")
+        print(result_json[:500] + "...")
 
-        # XML 파일로 저장
+        # JSON 파일로 저장
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_filename = f"test_{timestamp}.xml"
+        output_filename = f"test_{timestamp}.json"
         output_path = output_dir / output_filename
 
         with open(output_path, "w", encoding="utf-8") as f:
-            f.write(result_xml)
+            f.write(result_json)
 
         print("\n" + "=" * 80)
         print(f"✓ 결과가 '{output_path}' 파일로 저장되었습니다.")

@@ -12,7 +12,7 @@ author_profile_url: 'https://scholar.google.com/citations?user=ssXOHSoAAAAJ&hl=e
 test_paper_url: 'https://scholar.google.com/citations?view_op=view_citation&hl=en&user=ssXOHSoAAAAJ&sortby=pubdate&citation_for_view=ssXOHSoAAAAJ:XiSMed-E-HIC'
 
 # 출력 파일명 (Output filename)
-output_filename: 'test_output.xml'
+output_filename: 'test_output.json'
 
 # 출력 디렉토리 (Output directory)
 output_dir: 'output'
