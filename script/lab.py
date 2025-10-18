@@ -78,8 +78,17 @@ def fetch_papers_selenium(author_url):
     paper_links = []
 
     try:
-        # WebDriver 초기화 (webdriver-manager를 사용하여 자동으로 ChromeDriver 다운로드)
-        service = Service(ChromeDriverManager().install())
+        # WebDriver 초기화 (시스템에 설치된 chromedriver 사용)
+        # webdriver-manager 버전 문제로 시스템 chromedriver 직접 사용
+        import shutil
+        chromedriver_path = shutil.which('chromedriver')
+
+        if chromedriver_path:
+            service = Service(chromedriver_path)
+        else:
+            # fallback: webdriver-manager 사용
+            service = Service(ChromeDriverManager().install())
+
         driver = webdriver.Chrome(service=service, options=chrome_options)
         driver.get(author_url)
 
