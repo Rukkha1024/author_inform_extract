@@ -1,50 +1,108 @@
 #!/usr/bin/env python3
 """
-google_scholar_scraper.py
-=========================
+Scrape Google Scholar author profiles and retrieve all publications.
 
-This script automates the retrieval of all publications for a given Google
-Scholar author.  By supplying the URL of an author's Google Scholar profile
-(`https://scholar.google.com/citations?user=<ID>&hl=<lang>`), the script
-parses the underlying `user` parameter to obtain the unique author ID and
-leverages the `scholarly` Python package to fetch the author's metadata and
-their entire publication list.  Each publication is then filled out to
-retrieve detailed bibliographic information such as the title, authors,
-journal/venue, publication year, abstract, number of citations, and links
-to the original work.  The final output is written as a JSON document with
-a unified structure consisting of author metadata and a list of article
-records.
+This module automates the retrieval of author metadata and comprehensive
+publication lists from Google Scholar. Given an author's profile URL, the
+script uses the ``scholarly`` library to fetch:
 
-The `scholarly` library was chosen because it provides programmatic access
-to Google Scholar without requiring official API keys and can return
-detailed publication information.  According to the project's
-documentation, it allows retrieval of author and publication information
-from Google Scholar "in a friendly, Pythonic way without having to solve
-CAPTCHAs"【417558673383529†L94-L98】 and does not require an API key【149657658920553†L69-L76】.  The
-script optionally supports the use of free or paid proxies via
-`ProxyGenerator` to mitigate the risk of IP blocks (which the
-documentation warns can occur when making certain types of queries
-【417558673383529†L186-L189】).
+  * Author information (name, affiliation, citations, interests, etc.)
+  * Complete publication list with detailed bibliographic data
+  * Per-publication metrics (title, authors, venue, year, citations, URLs, etc.)
 
-Usage example::
+The output is saved as JSON with the filename format ``output/author_{name}.json``.
 
-    python3 google_scholar_scraper.py \
-        "https://scholar.google.com/citations?user=ssXOHSoAAAAJ&hl=en" \
-        --output jeremy_crenshaw.json
+Arguments
+---------
+URL (required)
+    Google Scholar author profile URL in the form:
+    https://scholar.google.com/citations?user=<ID>&hl=<lang>
 
-The above command will create a JSON file named ``jeremy_crenshaw.json``
-containing the author information and a list of all publications by the
-author represented by the supplied URL.
+--no-proxy
+    Disable proxy usage (default: proxies are enabled).
+    By default, the script uses free proxies to reduce the risk of
+    Google Scholar blocking requests.
+
+--proxy-method {free,scraperapi,tor,none}
+    Select the proxy backend to use (default: free).
+
+    * free: Use a pool of public proxies (no credentials needed)
+    * scraperapi: Use paid ScraperAPI service (requires --scraperapi-key)
+    * tor: Launch internal Tor instance (Tor must be installed)
+    * none: Disable proxies (equivalent to --no-proxy)
+
+--scraperapi-key <KEY>
+    API key for ScraperAPI proxy service.
+    Required when --proxy-method=scraperapi.
+
+Examples
+--------
+Basic usage with default free proxies::
+
+    python3 google_scholar_scraper.py \\
+        "https://scholar.google.com/citations?user=ssXOHSoAAAAJ&hl=en"
+
+Run without proxies::
+
+    python3 google_scholar_scraper.py \\
+        "https://scholar.google.com/citations?user=ssXOHSoAAAAJ&hl=en" \\
+        --no-proxy
+
+Use ScraperAPI::
+
+    python3 google_scholar_scraper.py \\
+        "https://scholar.google.com/citations?user=ssXOHSoAAAAJ&hl=en" \\
+        --proxy-method scraperapi --scraperapi-key YOUR_API_KEY
+
+Output Format
+-------------
+Output JSON file:
+    output/author_{sanitized_author_name}.json
+
+JSON structure::
+
+    {
+      "author": {
+        "scholar_id": "...",
+        "name": "...",
+        "affiliation": "...",
+        "email_domain": "...",
+        "interests(label)": [...],
+        "citedby": <int>,
+        "citedby5y": <int>,
+        "total_publications": <int>
+      },
+      "articles": [
+        {
+          "title": "...",
+          "authors": "...",
+          "journal": "...",
+          "year": <int>,
+          "abstract": "..." or null,
+          "pages": "..." or null,
+          "num_citations": <int>,
+          "cited_by_url": "...",
+          "pub_url": "...",
+          "eprint_url": "..." or null,
+          "url_scholarbib": "...",
+          "source": "...",
+          "author_ids": [...] (if multi-author publication)
+        },
+        ...
+      ]
+    }
 
 Notes
 -----
-* Running this script repeatedly against Google Scholar may eventually
-  trigger anti-bot measures.  To reduce the likelihood of being blocked,
-  enable the ``--use-proxy`` option which configures `scholarly` to use
-  free proxies or other proxy services available via `ProxyGenerator`.
-* If a publication does not include certain bibliographic fields (for
-  example, page numbers or abstract), those entries will be set to
-  ``None`` in the output.
+* Repeated requests to Google Scholar may trigger rate limiting (HTTP 429)
+  or complete blocking. Using proxies (enabled by default) significantly
+  reduces this risk.
+* Some bibliographic fields may be null if not available in Google Scholar
+  (e.g., page numbers, abstracts, eprint URLs).
+* If a publication fails to fill with detailed information, the original
+  publication object is used and a 'fill_error' field is added for debugging.
+* Author names with special characters are sanitized for the output filename
+  (spaces replaced with underscores, special chars removed).
 
 """
 
@@ -273,11 +331,6 @@ def main() -> None:
     parser.add_argument(
         "url",
         help="Google Scholar author profile URL (e.g. https://scholar.google.com/citations?user=ID&hl=en)",
-    )
-    parser.add_argument(
-        "--output",
-        default="output/author_publications.json",
-        help="Path to the output JSON file. Defaults to 'output/author_publications.json'.",
     )
     parser.add_argument(
         "--no-proxy",
