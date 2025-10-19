@@ -51,6 +51,7 @@ Notes
 import argparse
 import json
 import os
+import re
 from urllib.parse import urlparse, parse_qs
 from typing import Optional, Dict, Any
 
@@ -239,6 +240,32 @@ def scrape_author(url: str, use_proxy: bool = False, proxy_method: str = "free",
     return {"author": author_data, "articles": articles}
 
 
+def sanitize_filename(filename: str) -> str:
+    r"""Sanitize a string to be used as a filename.
+
+    This function removes or replaces characters that are not allowed or
+    problematic in filenames. Specifically, it replaces whitespace with
+    underscores and removes special characters like /, \, :, *, ?, ", <, >, |.
+
+    Parameters
+    ----------
+    filename : str
+        The string to sanitize.
+
+    Returns
+    -------
+    str
+        A sanitized version of the input string suitable for use as a filename.
+    """
+    # Replace whitespace with underscores
+    filename = re.sub(r'\s+', '_', filename)
+    # Remove or replace problematic characters for filenames
+    filename = re.sub(r'[/<>:"|?*\\]', '', filename)
+    # Remove leading/trailing dots or spaces
+    filename = filename.strip('. ')
+    return filename if filename else "unknown"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Scrape a Google Scholar author's profile and publications into JSON."
@@ -282,11 +309,16 @@ def main() -> None:
         scraperapi_key=args.scraperapi_key,
     )
 
-    # Write the result to the specified output file
-    with open(args.output, "w", encoding="utf-8") as outfile:
+    # Extract author name and generate filename
+    author_name = data.get("author", {}).get("name", "unknown")
+    sanitized_name = sanitize_filename(author_name)
+    output_filename = f"output/author_{sanitized_name}.json"
+
+    # Write the result to the generated output file
+    with open(output_filename, "w", encoding="utf-8") as outfile:
         json.dump(data, outfile, ensure_ascii=False, indent=2)
 
-    print(f"Scraped data for author saved to {args.output}")
+    print(f"Scraped data for author saved to {output_filename}")
 
 
 if __name__ == "__main__":
