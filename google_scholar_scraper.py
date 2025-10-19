@@ -50,6 +50,7 @@ Notes
 
 import argparse
 import json
+import os
 from urllib.parse import urlparse, parse_qs
 from typing import Optional, Dict, Any
 
@@ -248,13 +249,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--output",
-        default="author_publications.json",
-        help="Path to the output JSON file. Defaults to 'author_publications.json'.",
+        default="output/author_publications.json",
+        help="Path to the output JSON file. Defaults to 'output/author_publications.json'.",
     )
     parser.add_argument(
-        "--use-proxy",
+        "--no-proxy",
         action="store_true",
-        help="Enable use of proxies to reduce risk of Google Scholar blocking requests.",
+        help="Disable use of proxies (proxies are enabled by default to reduce risk of Google Scholar blocking requests).",
     )
     parser.add_argument(
         "--proxy-method",
@@ -271,9 +272,12 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    # Create output directory if it doesn't exist
+    os.makedirs("output", exist_ok=True)
+
     data = scrape_author(
         url=args.url,
-        use_proxy=args.use_proxy,
+        use_proxy=not args.no_proxy,
         proxy_method=args.proxy_method,
         scraperapi_key=args.scraperapi_key,
     )
