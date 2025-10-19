@@ -20,15 +20,17 @@ URL (required)
 
 --no-proxy
     Disable proxy usage (default: proxies are enabled).
-    By default, the script uses free proxies to reduce the risk of
-    Google Scholar blocking requests.
+    By default, the script uses free proxies with automatic fallback
+    to reduce the risk of Google Scholar blocking requests.
 
 --proxy-method {free,scraperapi,tor,none}
     Select the proxy backend to use (default: free).
 
-    * free: Use a pool of public proxies (no credentials needed)
-    * scraperapi: Use paid ScraperAPI service (requires --scraperapi-key)
-    * tor: Launch internal Tor instance (Tor must be installed)
+    * free: Use a pool of public proxies with automatic fallback. If the
+      free proxy fails, the script automatically tries: none → scraperapi
+      → tor (no credentials needed for free/none/tor)
+    * scraperapi: Use paid ScraperAPI service only (requires --scraperapi-key)
+    * tor: Launch internal Tor instance only (Tor must be installed)
     * none: Disable proxies (equivalent to --no-proxy)
 
 --scraperapi-key <KEY>
@@ -54,55 +56,18 @@ Use ScraperAPI::
         "https://scholar.google.com/citations?user=ssXOHSoAAAAJ&hl=en" \\
         --proxy-method scraperapi --scraperapi-key YOUR_API_KEY
 
-Output Format
--------------
-Output JSON file:
-    output/author_{sanitized_author_name}.json
-
-JSON structure::
-
-    {
-      "author": {
-        "scholar_id": "...",
-        "name": "...",
-        "affiliation": "...",
-        "email_domain": "...",
-        "interests(label)": [...],
-        "citedby": <int>,
-        "citedby5y": <int>,
-        "total_publications": <int>
-      },
-      "articles": [
-        {
-          "title": "...",
-          "authors": "...",
-          "journal": "...",
-          "year": <int>,
-          "abstract": "..." or null,
-          "pages": "..." or null,
-          "num_citations": <int>,
-          "cited_by_url": "...",
-          "pub_url": "...",
-          "eprint_url": "..." or null,
-          "url_scholarbib": "...",
-          "source": "...",
-          "author_ids": [...] (if multi-author publication)
-        },
-        ...
-      ]
-    }
-
 Notes
 -----
 * Repeated requests to Google Scholar may trigger rate limiting (HTTP 429)
   or complete blocking. Using proxies (enabled by default) significantly
   reduces this risk.
+* When using the default free proxy method, the script automatically falls
+  back to alternative methods (none → scraperapi → tor) if the current
+  method fails. This maximizes the success rate without manual intervention.
 * Some bibliographic fields may be null if not available in Google Scholar
   (e.g., page numbers, abstracts, eprint URLs).
 * If a publication fails to fill with detailed information, the original
   publication object is used and a 'fill_error' field is added for debugging.
-* Author names with special characters are sanitized for the output filename
-  (spaces replaced with underscores, special chars removed).
 
 """
 
@@ -110,8 +75,10 @@ import argparse
 import json
 import os
 import re
+import sys
+import importlib
 from urllib.parse import urlparse, parse_qs
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from scholarly import scholarly, ProxyGenerator  # type: ignore
 
@@ -144,7 +111,7 @@ def extract_author_id(url: str) -> Optional[str]:
     return None
 
 
-def setup_proxy(method: str = "free", scraperapi_key: Optional[str] = None) -> None:
+def setup_proxy(method: str = "free", scraperapi_key: Optional[str] = None) -> bool:
     """Configure proxies for the `scholarly` library.
 
     `scholarly` supports several proxy backends through the
@@ -168,79 +135,62 @@ def setup_proxy(method: str = "free", scraperapi_key: Optional[str] = None) -> N
     scraperapi_key : Optional[str]
         API key for the ``scraperapi`` proxy method.  Ignored if
         ``method`` is not ``"scraperapi"``.
+
+    Returns
+    -------
+    bool
+        ``True`` if proxy setup succeeded or was skipped (method="none"),
+        ``False`` if proxy setup failed.
     """
     if method == "none":
-        return
-    pg = ProxyGenerator()
-    if method == "free":
-        # Use a pool of free proxies
-        pg.FreeProxies()
-    elif method == "scraperapi":
-        if not scraperapi_key:
-            raise ValueError(
-                "`scraperapi_key` must be provided when using the scraperapi proxy."
-            )
-        pg.ScraperAPI(scraperapi_key)
-    elif method == "tor":
-        # Launch an internal Tor instance using default ports.  Users may
-        # customise the ports as needed.  Tor must be installed on the
-        # system for this to work.
-        pg.Tor_Internal()
-    else:
-        raise ValueError(f"Unsupported proxy method: {method}")
-    # Register the proxy with scholarly
-    scholarly.use_proxy(pg)
+        return True
+
+    try:
+        pg = ProxyGenerator()
+        if method == "free":
+            # Use a pool of free proxies
+            pg.FreeProxies()
+        elif method == "scraperapi":
+            if not scraperapi_key:
+                # Skip scraperapi if no key is provided
+                return False
+            pg.ScraperAPI(scraperapi_key)
+        elif method == "tor":
+            # Launch an internal Tor instance using default ports.  Users may
+            # customise the ports as needed.  Tor must be installed on the
+            # system for this to work.
+            pg.Tor_Internal()
+        else:
+            return False
+        # Register the proxy with scholarly
+        scholarly.use_proxy(pg)
+        return True
+    except Exception as e:
+        print(f"Warning: Failed to setup {method} proxy: {e}")
+        return False
 
 
-def scrape_author(url: str, use_proxy: bool = False, proxy_method: str = "free", scraperapi_key: Optional[str] = None) -> Dict[str, Any]:
-    """Retrieve an author's profile and all publications from Google Scholar.
+def _perform_scraping(author_id: str) -> Dict[str, Any]:
+    """Perform the actual scraping of author data and publications.
 
-    This function orchestrates the scraping process.  It extracts the
-    author ID from the provided URL, configures proxies if requested,
-    retrieves the author's basic details and list of publications, fills
-    each publication with additional bibliographic information, and
-    assembles a unified data structure representing the author and their
-    works.
+    This is the core scraping logic extracted to allow retry with different
+    proxy configurations. It assumes that proxy setup (if any) has already
+    been performed before calling this function.
 
     Parameters
     ----------
-    url : str
-        The Google Scholar author profile URL.
-    use_proxy : bool, optional
-        Whether to enable proxy usage.  Defaults to ``False``.
-    proxy_method : str, optional
-        The proxy backend to use when ``use_proxy`` is true.  See
-        :func:`setup_proxy` for valid options.  Defaults to ``"free"``.
-    scraperapi_key : Optional[str], optional
-        API key used when ``proxy_method`` is ``"scraperapi"``.  Defaults
-        to ``None``.
+    author_id : str
+        The Google Scholar author ID.
 
     Returns
     -------
     Dict[str, Any]
-        A dictionary containing author information under the key
-        ``"author"`` and a list of publication dictionaries under
-        ``"articles"``.
-
-    Raises
-    ------
-    ValueError
-        If the author ID cannot be extracted from the URL or if proxy
-        configuration fails.
+        A dictionary containing author information and publications.
     """
-    author_id = extract_author_id(url)
-    if not author_id:
-        raise ValueError(
-            f"Failed to parse author ID from URL: {url}. Ensure the URL contains a 'user' parameter."
-        )
+    # Import scholarly from the current module state
+    from scholarly import scholarly
 
-    # Configure proxy if requested
-    if use_proxy:
-        setup_proxy(proxy_method, scraperapi_key)
-
-    # Search for the author by ID.  `search_author_id` returns a lightly
-    # populated Author object that must be filled to obtain details and
-    # publications【149657658920553†L121-L134】.
+    # Search for the author by ID
     author_obj = scholarly.search_author_id(author_id)
     # Fill the author object with basic info and list of publications
     author_filled = scholarly.fill(author_obj, sections=["basics", "publications"])
@@ -263,7 +213,7 @@ def scrape_author(url: str, use_proxy: bool = False, proxy_method: str = "free",
 
     for pub in publications:
         try:
-            # Fill each publication to retrieve detailed information【149657658920553†L214-L218】.
+            # Fill each publication to retrieve detailed information
             pub_filled = scholarly.fill(pub)
         except Exception as exc:
             # If filling fails (e.g., due to network issues), record minimal info
@@ -272,7 +222,6 @@ def scrape_author(url: str, use_proxy: bool = False, proxy_method: str = "free",
 
         bib: Dict[str, Any] = pub_filled.get("bib", {}) if isinstance(pub_filled, dict) else {}
         article_entry: Dict[str, Any] = {
-            # Some IDs (e.g., citation_id) are not directly exposed by `scholarly`.
             "title": bib.get("title"),
             "authors": bib.get("author"),
             "journal": bib.get("venue"),
@@ -296,6 +245,145 @@ def scrape_author(url: str, use_proxy: bool = False, proxy_method: str = "free",
         articles.append(article_entry)
 
     return {"author": author_data, "articles": articles}
+
+
+def try_scrape_with_fallback(
+    author_id: str,
+    fallback_methods: List[str],
+    scraperapi_key: Optional[str] = None
+) -> Dict[str, Any]:
+    """Try scraping with multiple proxy methods using a fallback sequence.
+
+    This function attempts to scrape author data using a sequence of proxy
+    methods. If one method fails (either during setup or scraping), it
+    reloads the scholarly module and tries the next method in the sequence.
+
+    Parameters
+    ----------
+    author_id : str
+        The Google Scholar author ID.
+    fallback_methods : List[str]
+        List of proxy methods to try in sequence (e.g., ["free", "none", "tor"]).
+    scraperapi_key : Optional[str]
+        API key for ScraperAPI, required if "scraperapi" is in the fallback list.
+
+    Returns
+    -------
+    Dict[str, Any]
+        A dictionary containing author information and publications.
+
+    Raises
+    ------
+    Exception
+        If all proxy methods fail.
+    """
+    last_error = None
+    attempted_methods = []
+
+    for method in fallback_methods:
+        # Skip scraperapi if no key is provided
+        if method == "scraperapi" and not scraperapi_key:
+            print(f"Skipping scraperapi (no API key provided)")
+            continue
+
+        try:
+            print(f"Trying proxy method: {method}")
+            attempted_methods.append(method)
+
+            # Reload scholarly module to reset proxy state
+            if "scholarly" in sys.modules:
+                importlib.reload(sys.modules["scholarly"])
+                # Re-import after reload
+                global scholarly, ProxyGenerator
+                from scholarly import scholarly, ProxyGenerator
+
+            # Setup proxy
+            if not setup_proxy(method, scraperapi_key):
+                print(f"Failed to setup {method} proxy, trying next method...")
+                continue
+
+            # Perform scraping
+            data = _perform_scraping(author_id)
+            print(f"✓ Successfully scraped using proxy method: {method}")
+            return data
+
+        except Exception as e:
+            last_error = e
+            print(f"✗ Failed with {method} proxy: {str(e)[:100]}")
+            continue
+
+    # All methods failed
+    error_msg = (
+        f"All proxy methods failed. Attempted: {', '.join(attempted_methods)}. "
+        f"Last error: {last_error}"
+    )
+    raise Exception(error_msg)
+
+
+def scrape_author(url: str, use_proxy: bool = False, proxy_method: str = "free", scraperapi_key: Optional[str] = None) -> Dict[str, Any]:
+    """Retrieve an author's profile and all publications from Google Scholar.
+
+    This function orchestrates the scraping process.  It extracts the
+    author ID from the provided URL and uses automatic fallback between
+    different proxy methods if enabled.  When ``use_proxy`` is ``True``
+    and ``proxy_method`` is ``"free"`` (the default), the function will
+    automatically try fallback proxy methods in the sequence: free → none
+    → scraperapi → tor.  This significantly increases the success rate
+    when Google Scholar blocks certain proxy methods.
+
+    Parameters
+    ----------
+    url : str
+        The Google Scholar author profile URL.
+    use_proxy : bool, optional
+        Whether to enable proxy usage.  Defaults to ``False``.  When
+        ``True`` with default ``proxy_method``, automatic fallback is
+        enabled.
+    proxy_method : str, optional
+        The proxy backend to use when ``use_proxy`` is true.  See
+        :func:`setup_proxy` for valid options.  Defaults to ``"free"``.
+        If set to ``"free"``, automatic fallback to other methods is
+        enabled.  For other values, only that specific method is used.
+    scraperapi_key : Optional[str], optional
+        API key used when ``proxy_method`` is ``"scraperapi"`` or when
+        fallback reaches scraperapi.  Defaults to ``None``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        A dictionary containing author information under the key
+        ``"author"`` and a list of publication dictionaries under
+        ``"articles"``.
+
+    Raises
+    ------
+    ValueError
+        If the author ID cannot be extracted from the URL.
+    Exception
+        If scraping fails with all attempted proxy methods.
+    """
+    author_id = extract_author_id(url)
+    if not author_id:
+        raise ValueError(
+            f"Failed to parse author ID from URL: {url}. Ensure the URL contains a 'user' parameter."
+        )
+
+    # Use fallback mechanism when proxies are enabled with default "free" method
+    if use_proxy and proxy_method == "free":
+        # Automatic fallback sequence: free -> none -> scraperapi -> tor
+        fallback_sequence = ["free", "none", "scraperapi", "tor"]
+        print(f"Using automatic proxy fallback: {' -> '.join(fallback_sequence)}")
+        return try_scrape_with_fallback(author_id, fallback_sequence, scraperapi_key)
+
+    # Use single specified proxy method (no fallback)
+    else:
+        if use_proxy:
+            print(f"Using proxy method: {proxy_method} (no fallback)")
+            setup_proxy(proxy_method, scraperapi_key)
+        else:
+            print("Using direct connection (no proxy)")
+
+        return _perform_scraping(author_id)
 
 
 def sanitize_filename(filename: str) -> str:

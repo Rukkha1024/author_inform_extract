@@ -8,8 +8,10 @@ create git commit specifically in korean
 
 ==============================
 - [ ] 프록시 문제 해결 
-- [ ] 현재 docstring 제거. 새롭게 docstring 작성. 
+  - [ ] free가 default 
+  - [ ] free 안될 시 순차적으로 use the option: none -> scraperapi -> tor
+<!-- - [ ] 현재 docstring 제거. 새롭게 docstring 작성. 
   - [ ] 옵션은 docstring에 명시 
-  - [ ] docstring에 사용법 명시
-- [ ] config.yaml 필요한지 검토 
-
+  - [ ] docstring에 사용법 명시 -->
+<!-- - [ ] config.yaml 필요한지 검토: 필요 없다  -->
+<!-- - [ ] "6d36cb8c013b1736ba7610be32b6c22e69f53279" 이전에 한 내용 중 wsl2에 설치된 것들 모두 제거. python package, 기타 프로그램(크롬 등) -->
