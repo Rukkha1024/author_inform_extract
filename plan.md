@@ -20,9 +20,8 @@
   - 논문 정보의 정확성(실제 논문 상세 링크, 저자 정보 등)과 일관성(포맷, 항목 등) 보장
   - 새로운 저자에 대해서도 같은 방식으로 적용 가능
 - "<span class="gs_wr"><span class="gs_ico"></span><span class="gs_lbl">Show more</span></span>" 해당 부분을 클릭할 수 없을 때까지 논문의 리스트를 만든 후, 추출을 시작해야 한다. 
-- "<div class="gsc_oci_title_ggi"><a href="https://www.frontiersin.org/articles/10.3389/fspor.2021.788165/full" data-clk="hl=en&amp;sa=T&amp;ei=Y0vzaIW_K_LJieoPv_CRkAU"><span class="gsc_vcd_title_ggt">[HTML]</span> from frontiersin.org</a></div>" 의 "href" 링크도 json output에 저장되어야 한다. 
 - output에는 논문 저자의 내용도 포함되어야 한다. 
-  - 해당 부분의 예시: "<div id="gsc_prf_i"><div id="gsc_prf_inw"><div id="gsc_prf_in">Jeremy R. Crenshaw</div></div><div class="gsc_prf_il"><a href="/citations?view_op=view_org&amp;hl=en&amp;org=9340941294191691364" class="gsc_prf_ila">University of Delaware</a></div><div class="gsc_prf_il" id="gsc_prf_ivh">Verified email at udel.edu - <a href="http://sites.udel.edu/kaap/crenshaw-lab/" rel="nofollow" class="gsc_prf_ila">Homepage</a></div><div class="gsc_prf_il" id="gsc_prf_int"><a href="/citations?view_op=search_authors&amp;hl=en&amp;mauthors=label:falls" class="gsc_prf_inta gs_ibl">Falls</a><a href="/citations?view_op=search_authors&amp;hl=en&amp;mauthors=label:gait" class="gsc_prf_inta gs_ibl">Gait</a><a href="/citations?view_op=search_authors&amp;hl=en&amp;mauthors=label:balance" class="gsc_prf_inta gs_ibl">Balance</a><a href="/citations?view_op=search_authors&amp;hl=en&amp;mauthors=label:stability" class="gsc_prf_inta gs_ibl">Stability</a><a href="/citations?view_op=search_authors&amp;hl=en&amp;mauthors=label:biomechanics" class="gsc_prf_inta gs_ibl">Biomechanics</a></div></div>" 
+
 
 ***
 

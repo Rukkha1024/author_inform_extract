@@ -15,5 +15,4 @@
 
 - Save outputs in the "output" folder.
 - Save code files in the "script" folder.
-- The config.yaml file is for central control.
  
