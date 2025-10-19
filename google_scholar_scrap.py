@@ -93,6 +93,15 @@ def extract_author_id(url: str) -> Optional[str]:
     and returns the value associated with ``user``.  If the parameter is
     not present, ``None`` is returned.
 
+    This implementation is deliberately tolerant of variations in the
+    input URL:
+
+    * The domain may be any Google Scholar domain (e.g., ``.co.kr`` or
+      ``.de``).  Only the query parameters are inspected.
+    * The order of query parameters does not matter.
+    * Parameter names are compared in a case-insensitive manner.
+    * Additional fragments (after ``#``) or repeated parameters are ignored.
+
     Parameters
     ----------
     url : str
@@ -103,9 +112,20 @@ def extract_author_id(url: str) -> Optional[str]:
     Optional[str]
         The extracted author ID if available, otherwise ``None``.
     """
-    parsed = urlparse(url)
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        # If urlparse fails (e.g., due to malformed URL), return None
+        return None
+
+    # Parse the query string into a dict of {param: [values]}
     params = parse_qs(parsed.query)
-    user_list = params.get("user")
+
+    if not params:
+        return None
+    # Normalise parameter names to lower case for case-insensitive lookup
+    params_lower = {k.lower(): v for k, v in params.items()}
+    user_list = params_lower.get("user")
     if user_list:
         return user_list[0]
     return None
@@ -320,7 +340,13 @@ def try_scrape_with_fallback(
     raise Exception(error_msg)
 
 
-def scrape_author(url: str, use_proxy: bool = False, proxy_method: str = "free", scraperapi_key: Optional[str] = None) -> Dict[str, Any]:
+def scrape_author(
+    url: str,
+    use_proxy: bool = False,
+    proxy_method: str = "free",
+    scraperapi_key: Optional[str] = None,
+    author_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """Retrieve an author's profile and all publications from Google Scholar.
 
     This function orchestrates the scraping process.  It extracts the
@@ -358,14 +384,15 @@ def scrape_author(url: str, use_proxy: bool = False, proxy_method: str = "free",
     Raises
     ------
     ValueError
-        If the author ID cannot be extracted from the URL.
+        If the author ID cannot be extracted from the URL when ``author_id`` is not provided.
     Exception
         If scraping fails with all attempted proxy methods.
     """
-    author_id = extract_author_id(url)
-    if not author_id:
+    # If an explicit author ID is supplied, use it.  Otherwise, attempt to extract from the URL.
+    resolved_author_id: Optional[str] = author_id or extract_author_id(url)
+    if not resolved_author_id:
         raise ValueError(
-            f"Failed to parse author ID from URL: {url}. Ensure the URL contains a 'user' parameter."
+            f"Failed to parse author ID from URL: {url}. Ensure the URL contains a 'user' parameter or use the '--author-id' option."
         )
 
     # Use fallback mechanism when proxies are enabled with default "free" method
@@ -373,7 +400,7 @@ def scrape_author(url: str, use_proxy: bool = False, proxy_method: str = "free",
         # Automatic fallback sequence: free -> none -> scraperapi -> tor
         fallback_sequence = ["free", "none", "scraperapi", "tor"]
         print(f"Using automatic proxy fallback: {' -> '.join(fallback_sequence)}")
-        return try_scrape_with_fallback(author_id, fallback_sequence, scraperapi_key)
+        return try_scrape_with_fallback(resolved_author_id, fallback_sequence, scraperapi_key)
 
     # Use single specified proxy method (no fallback)
     else:
@@ -383,7 +410,7 @@ def scrape_author(url: str, use_proxy: bool = False, proxy_method: str = "free",
         else:
             print("Using direct connection (no proxy)")
 
-        return _perform_scraping(author_id)
+        return _perform_scraping(resolved_author_id)
 
 
 def sanitize_filename(filename: str) -> str:
@@ -418,7 +445,22 @@ def main() -> None:
     )
     parser.add_argument(
         "url",
-        help="Google Scholar author profile URL (e.g. https://scholar.google.com/citations?user=ID&hl=en)",
+        nargs="?",
+        help="Google Scholar author profile URL (e.g. https://scholar.google.com/citations?user=ID&hl=en)."
+             " Be sure to wrap the URL in quotes (\" \" or ' ') if it contains '&' characters to prevent"
+             " the shell from splitting it into multiple commands. This argument is optional if you provide"
+             " --author-id instead.",
+    )
+
+    # Allow passing an author ID directly to avoid shell quoting issues.
+    parser.add_argument(
+        "--author-id",
+        dest="author_id",
+        help=(
+            "Google Scholar author ID. If provided, the script will skip extracting the ID from the URL and"
+            " use this value directly. This can be useful when passing long URLs with many query parameters"
+            " where quoting might be cumbersome."
+        ),
     )
     parser.add_argument(
         "--no-proxy",
@@ -440,6 +482,12 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    # Ensure that either a URL or an author ID is provided.  If neither is given,
+    # instruct the user accordingly.  argparse's built-in error handling will
+    # output usage information along with this message.
+    if not args.url and not args.author_id:
+        parser.error("You must supply either a Google Scholar profile URL or an author ID via --author-id.")
+
     # Create output directory if it doesn't exist
     os.makedirs("output", exist_ok=True)
 
@@ -448,6 +496,7 @@ def main() -> None:
         use_proxy=not args.no_proxy,
         proxy_method=args.proxy_method,
         scraperapi_key=args.scraperapi_key,
+        author_id=args.author_id,
     )
 
     # Extract author name and generate filename
