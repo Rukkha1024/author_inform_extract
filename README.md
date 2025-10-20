@@ -124,18 +124,6 @@ python3 google_scholar_scrap.py --author-id ssXOHSoAAAAJ \
 
 ---
 
-## 🔌 내부 구성(개발자용)
-
-- **`extract_author_id(url)`**: URL 쿼리의 `user` 파라미터에서 저자 ID 추출 (도메인/파라미터 순서/대소문자 변형 허용)
-- **`setup_proxy(method, key)`**: `ProxyGenerator` 로 프록시 설정 (`free`, `scraperapi`, `tor`, `none`)
-- **`_perform_scraping(author_id)`**: 실제 스크레이핑 로직 (저자 검색→기본정보/출판목록 채우기→논문별 상세 수집)
-- **`try_scrape_with_fallback(author_id, methods, key)`**: 프록시 실패 시 `scholarly` 모듈 리로드 후 다음 방법 시도
-- **`scrape_author(...)`**: 상위 오케스트레이션 (URL/ID 해석, 프록시 on/off 및 폴백 제어)
-- **`sanitize_filename(name)`**: 결과 파일명 안전화
-- **진입점**: `main()` — 인자 파싱, 출력 디렉터리 생성, JSON 저장
-
----
-
 ## 🧪 사용 팁
 
 - **URL 대신 ID 사용**: 긴 URL을 복사/붙여넣기하기 번거롭다면 `--author-id` 를 쓰세요.
@@ -163,7 +151,4 @@ A. 요청 간 대기 시간을 늘리고, 프록시 폴백을 활용하세요. �
 
 **Q. 일부 논문의 상세 정보가 비어 있습니다.**  
 A. Scholar 페이지에 값이 없거나 `fill` 중 실패했을 수 있습니다. 이 경우 해당 항목에 `fill_error` 가 포함됩니다.
-
-**Q. 결과 파일명이 이상합니다.**  
-A. 파일명은 `sanitize_filename`으로 정규화합니다. 공백은 `_`, 위험 문자는 제거됩니다.
 
