@@ -1,0 +1,4 @@
+# Google Scholar Scraper Dependencies
+# Python 3.6+ required
+
+scholarly>=2.0.0
