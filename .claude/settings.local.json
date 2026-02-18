@@ -1,0 +1,46 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__gemini-cli__brainstorm",
+      "mcp__desktop-commander__start_process",
+      "mcp__desktop-commander__interact_with_process",
+      "mcp__desktop-commander__force_terminate",
+      "Bash(ls:*)",
+      "mcp__desktop-commander__read_file",
+      "mcp__desktop-commander__list_directory",
+      "Bash(cd:*)",
+      "mcp__context7-mcp__resolve-library-id",
+      "mcp__context7-mcp__get-library-docs",
+      "Bash(conda activate:*)",
+      "Bash(source:*)",
+      "Bash(pip install pytz tqdm)",
+      "Bash(conda:*)",
+      "Bash(chmod:*)",
+      "Bash(cat:*)",
+      "Bash(nvidia-smi:*)",
+      "Bash(echo $LD_LIBRARY_PATH)",
+      "Bash(echo:*)",
+      "Bash(export:*)",
+      "Bash(ldd:*)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__get-library-docs",
+      "Bash(nvcc:*)",
+      "Bash(jupyter:*)",
+      "mcp__qwen-cli__ask-qwen",
+      "Bash(grep:*)",
+      "mcp__desktop-commander__get_file_info",
+      "mcp__excel__excel_describe_sheets",
+      "mcp__excel__excel_read_sheet",
+      "mcp__desktop-commander__start_search",
+      "mcp__desktop-commander__get_more_search_results"
+    ],
+    "deny": []
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "context7",
+    "excel",
+    "codex"
+  ],
+  "defaultMode": "bypassPermissions"
+}
